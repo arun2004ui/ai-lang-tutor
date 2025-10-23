@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Language Tutor (India Focus)</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use Inter font -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8; /* Light background */
+        }
+        .chat-bubble-user {
+            background-color: #2563eb; /* Strong Blue (Tailwind 600) for user */
+            color: white;
+            border-radius: 1.5rem 1.5rem 0.5rem 1.5rem;
+        }
+        .chat-bubble-gemini {
+            background-color: #ffffff; /* White for tutor */
+            color: #1f2937;
+            border-radius: 1.5rem 1.5rem 1.5rem 0.5rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+        }
+        /* Custom spinner style for visibility */
+        @keyframes spinner-grow {
+            0%, 100% { opacity: 0; }
+            50% { opacity: 1; }
+        }
+        #loading-spinner {
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-top-color: #ffffff;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen antialiased">
+
+    <!-- Main Container -->
+    <div class="flex flex-col flex-1 max-w-xl mx-auto w-full">
+
+        <!-- Header -->
+        <header class="p-4 bg-white shadow-md rounded-b-xl mb-4 sticky top-0 z-10">
+            <h1 class="text-xl font-bold text-center text-gray-800">🗣️ Language Tutor: India Edition</h1>
+            <p class="text-sm text-center text-gray-500">Practice **English**, Hindi, Tamil, Telugu, Kannada, or any language!</p>
+        </header>
+
+        <!-- Chat History -->
+        <main id="chat-history" class="flex-1 overflow-y-auto p-4 space-y-4">
+            <!-- Initial welcome message from the tutor -->
+            <div class="flex justify-start">
+                <div class="chat-bubble-gemini p-3 max-w-xs md:max-w-md">
+                    <p>Namaste! I'm your specialized language tutor. I can help you perfect your **English**, or practice languages like **Hindi, Tamil, Telugu, or Kannada**. What would you like to discuss today?</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Input Area (Fixed to the bottom) -->
+        <div class="p-4 bg-white shadow-lg rounded-t-xl mt-4 sticky bottom-0 z-10">
+            <form id="chat-form" class="flex gap-2">
+                <input
+                    type="text"
+                    id="user-input"
+                    placeholder="Type your message here..."
+                    autocomplete="off"
+                    required
+                    class="flex-1 p-3 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-600 transition duration-150"
+                >
+                <button
+                    type="submit"
+                    id="send-button"
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-full transition duration-150 shadow-md flex items-center justify-center disabled:opacity-50"
+                >
+                    <svg id="send-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    <div id="loading-spinner" class="hidden w-5 h-5 border-4 rounded-full" role="status"></div>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script>
+        // --- API and Configuration ---
+        // We now point the API URL to our local Node.js server running on port 3000
+        const apiUrl = 'http://localhost:3000/api/generate'; 
+        // The API key is now stored securely on the Node.js server (server.js)
+        const systemInstruction = "You are a friendly, patient, and knowledgeable language tutor specialized in helping users from India practice languages, especially English. You are aware of common linguistic influences from Hindi, Marathi, Tamil, Telugu, Kannada, etc., and can gently correct errors common among Indian English speakers (e.g., usage of prepositions, tenses). You can also help practice Indian languages like **Hindi, Tamil, Telugu, and Kannada** if requested. Your goal is to keep the conversation going, correct grammatical errors subtly, and introduce new vocabulary or concepts naturally. Always respond in the language the user is primarily using or learning. Keep your responses encouraging and conversational, acknowledging the cultural context when appropriate.";
+
+        // Array to store the conversation history
+        let chatHistory = [];
+
+        // --- DOM Elements ---
+        const chatForm = document.getElementById('chat-form');
+        const userInput = document.getElementById('user-input');
+        const chatHistoryDiv = document.getElementById('chat-history');
+        const sendButton = document.getElementById('send-button');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const sendIcon = document.getElementById('send-icon');
+
+
+        /**
+         * Converts base64 to ArrayBuffer (Not strictly needed here, but kept for future utility)
+         */
+        const base64ToArrayBuffer = (base64) => {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        };
+
+        /**
+         * Simple utility to show/hide loading state.
+         */
+        function setLoading(isLoading) {
+            userInput.disabled = isLoading;
+            sendButton.disabled = isLoading;
+            if (isLoading) {
+                sendIcon.classList.add('hidden');
+                loadingSpinner.classList.remove('hidden');
+            } else {
+                sendIcon.classList.remove('hidden');
+                loadingSpinner.classList.add('hidden');
+            }
+        }
+
+        /**
+         * Displays a message in the chat history.
+         * @param {string} text - The message content.
+         * @param {string} sender - 'user' or 'gemini'.
+         */
+        function displayMessage(text, sender) {
+            const messageWrapper = document.createElement('div');
+            const bubble = document.createElement('div');
+
+            // Apply flex justification based on sender
+            messageWrapper.className = `flex ${sender === 'user' ? 'justify-end' : 'justify-start'}`;
+
+            // Apply bubble styling
+            bubble.className = `p-3 max-w-xs md:max-w-md ${sender === 'user' ? 'chat-bubble-user' : 'chat-bubble-gemini'}`;
+            
+            // Convert simple markdown elements like **bold** to HTML
+            // This is a minimal implementation, more complex markdown would need a library
+            const formattedText = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            bubble.innerHTML = formattedText;
+
+
+            messageWrapper.appendChild(bubble);
+            chatHistoryDiv.appendChild(messageWrapper);
+
+            // Scroll to the bottom of the chat
+            chatHistoryDiv.scrollTop = chatHistoryDiv.scrollHeight;
+        }
+
+        /**
+         * Calls the Gemini API via the local proxy server with exponential backoff for retries.
+         * @param {number} maxRetries - Maximum number of retries.
+         * @param {number} delay - Initial delay in milliseconds.
+         * @returns {Promise<Object>} The API response object.
+         */
+        async function callGeminiAPI(maxRetries = 3, delay = 1000) {
+            // Send the history and system instructions to the proxy server
+            const payload = {
+                contents: chatHistory,
+                systemInstruction: {
+                    parts: [{ text: systemInstruction }]
+                },
+            };
+
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        return await response.json();
+                    } else {
+                        // Handle errors from the proxy server itself (e.g., 500 status)
+                        const errorData = await response.json().catch(() => ({ message: 'Unknown server error.' }));
+                        throw new Error(`Proxy call failed with status ${response.status}: ${errorData.error || errorData.message}`);
+                    }
+                } catch (error) {
+                    if (i < maxRetries - 1) {
+                        console.error(`Attempt ${i + 1} failed: ${error.message}. Retrying...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        delay *= 2;
+                        continue;
+                    } else {
+                        throw new Error(`API call failed definitively: ${error.message}. Make sure your Node.js proxy server is running.`);
+                    }
+                }
+            }
+            throw new Error("Exhausted all retries without successful API response.");
+        }
+
+
+        /**
+         * Handles sending the message and getting the tutor's response.
+         * @param {Event} e - The form submit event.
+         */
+        async function sendMessage(e) {
+            e.preventDefault();
+
+            const userText = userInput.value.trim();
+            if (!userText) return;
+
+            // 1. Display user message and clear input
+            displayMessage(userText, 'user');
+            userInput.value = '';
+
+            // 2. Add user message to history (for the API payload)
+            chatHistory.push({ role: 'user', parts: [{ text: userText }] });
+
+            setLoading(true);
+
+            try {
+                const responseJson = await callGeminiAPI();
+
+                const candidate = responseJson.candidates?.[0];
+                const geminiText = candidate?.content?.parts?.[0]?.text;
+
+                if (geminiText) {
+                    // 3. Add Gemini response to history
+                    chatHistory.push({ role: 'model', parts: [{ text: geminiText }] });
+                    
+                    // 4. Display Gemini response
+                    displayMessage(geminiText, 'gemini');
+                } else {
+                    displayMessage("Sorry, I couldn't generate a response. Please try again.", 'gemini');
+                }
+
+            } catch (error) {
+                console.error("Gemini API Error:", error);
+                displayMessage("An error occurred. Please check the console for details and try again. If using the proxy server, make sure it is running!", 'gemini');
+                // Remove the last user message from history to allow retry without duplicates
+                chatHistory.pop(); 
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        // Attach event listener
+        chatForm.addEventListener('submit', sendMessage);
+
+    </script>
+</body>
+</html>
